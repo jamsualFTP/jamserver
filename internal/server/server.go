@@ -5,6 +5,17 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
+)
+
+// NOTE: https://www.rfc-editor.org/rfc/rfc959
+// TODO : implement auth system,
+//                  typical ftp commands
+
+var (
+	connectionCounter int
+	activeConnections = make(map[int]*net.TCPConn)
+	mu                sync.Mutex // mutex for  handle concurrent connections
 )
 
 func Run() error {
@@ -18,36 +29,49 @@ func Run() error {
 		return fmt.Errorf("listening error %w", listenErr)
 	}
 	defer listener.Close()
+
 	fmt.Println("jamsualFTP started!")
 	fmt.Printf("Listening on %v at port %v \n", tcpAddr.IP, tcpAddr.Port)
 
 	for {
-		fmt.Println("Waiting for upcoming connections... \n")
+		fmt.Print("Waiting for upcoming connections... \n\n")
 		conn, acceptErr := listener.AcceptTCP()
 		if acceptErr != nil {
 			log.Printf("connection error %v", acceptErr)
 			continue
 		}
 
-		fmt.Println("Accepted new connection! \n")
-		go HandleConnection(conn)
+		mu.Lock()
+		connectionCounter++
+		id := connectionCounter
+		activeConnections[id] = conn
+		mu.Unlock()
+
+		addr := conn.RemoteAddr().String()
+		fmt.Printf("Accepted new connection: id = %v! %v \n\n", id, addr)
+		go HandleConnection(conn, id)
 	}
 }
 
-func HandleConnection(conn *net.TCPConn) {
-	defer conn.Close()
-	conn.Write([]byte("220 Welcome to jamsualFTP server ! \n"))
+func HandleConnection(conn *net.TCPConn, id int) {
+	defer func() {
+		conn.Close()
+		mu.Lock()
+		delete(activeConnections, id)
+		fmt.Printf("Connection %v closed and removed from active list\n", id)
+		mu.Unlock()
+	}()
+
+	conn.Write([]byte(fmt.Sprintf("220 Welcome to jamsualFTP server, user %v! \n", id)))
 
 	for {
 		buffer := make([]byte, 128)
 		n, err := conn.Read(buffer)
-		if err == io.EOF {
-			fmt.Println("Client closed the connection")
-		}
-		fmt.Printf("Message from client: %s \n", string(buffer[:n]))
 
-		// TODO : implement auth system,
-		//                  typical ftp commands
-		// NOTE: https://www.rfc-editor.org/rfc/rfc959
+		if err == io.EOF {
+			return
+		}
+
+		fmt.Printf("Message from client: %s \n", string(buffer[:n]))
 	}
 }
