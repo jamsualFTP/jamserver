@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"sync"
 )
 
@@ -19,7 +20,9 @@ var (
 )
 
 func Run() error {
-	address := "127.0.0.1:2121"
+	address := "0.0.0.0:2121"
+	// address := "127.0.0.1:2121"
+
 	tcpAddr, err := net.ResolveTCPAddr("tcp", address)
 	if err != nil {
 		return fmt.Errorf("resolving address error %w", err)
@@ -62,7 +65,7 @@ func HandleConnection(conn *net.TCPConn, id int) {
 		mu.Unlock()
 	}()
 
-	conn.Write([]byte(fmt.Sprintf("220 Welcome to jamsualFTP server, user %v! \n", id)))
+	conn.Write([]byte(fmt.Sprintf("220 Welcome to jamsualFTP server, user %v! \n\n", id)))
 
 	for {
 		buffer := make([]byte, 128)
@@ -71,7 +74,46 @@ func HandleConnection(conn *net.TCPConn, id int) {
 		if err == io.EOF {
 			return
 		}
+		str := strings.TrimSpace(string(buffer[:n]))
+		part := strings.Split(str, " ")
+		command := strings.ToUpper(part[0])
+		args := part[1:]
+		HandleCommands(conn, command, args)
 
-		fmt.Printf("Message from client: %s \n", string(buffer[:n]))
 	}
 }
+
+// using command pattern for a while, maybe will refactor to COR
+
+func HandleCommands(conn *net.TCPConn, command string, args []string) {
+	commands := map[string]func(*net.TCPConn, []string){
+		"ECHO":     handleEcho,
+		"HELLO":    handleHello,
+		"USER":     handleUser,
+		"PASSWORD": handlePassword,
+	}
+
+	if result, ok := commands[command]; ok {
+		result(conn, args)
+	} else {
+		conn.Write([]byte("502, command not implemented \n\n"))
+	}
+}
+
+func handleEcho(conn *net.TCPConn, value []string) {
+	conn.Write([]byte(fmt.Sprintf("%v \n\n", strings.Join(value, " "))))
+}
+
+func handleHello(conn *net.TCPConn, value []string) {
+	conn.Write([]byte("Hello \n\n"))
+}
+
+func handleUser(conn *net.TCPConn, value []string) {
+	user := value[0]
+	if user == "fill" {
+		fmt.Print("TODO: ")
+		// TODO: login system
+	}
+}
+
+func handlePassword(conn *net.TCPConn, value []string) {}
