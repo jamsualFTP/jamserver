@@ -163,4 +163,5 @@ func handleRegister(conn *net.TCPConn, value []string) {
 
 func handleLogin(conn *net.TCPConn, value []string) {
 	// bcrypt.CompareHashAndPassword
+	// TODO: make some cool custom tcp client: auto highlighting keywords, more cool sh!
 }
