@@ -14,5 +14,13 @@
   {
     "login": "adam",
     "password": "$2a$10$ZjE9o9RsLCKyTITLWex3QuJfnZjGkU7xLBuB5t2mwLnx289ItH1C6"
+  },
+  {
+    "login": "nuja",
+    "password": "$2a$10$qr86MFwCWQFxn7HLfwpmIeb/EE1vyFGXw.b38Kgdf03N/WPOqEzlS"
+  },
+  {
+    "login": "hzero",
+    "password": "$2a$10$CnEEJxcFvzKN7EHTZpyqdeYLnkUWhmNIhLyRpTPxKxE83CTyEKP2K"
   }
 ]

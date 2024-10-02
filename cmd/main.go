@@ -1,7 +1,7 @@
 package main
 
 import (
-	"jamsual/internal/server"
+	"jamserver/internal/server"
 	"log"
 )
 

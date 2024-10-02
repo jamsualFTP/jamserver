@@ -8,10 +8,10 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -o jamsualftp ./cmd
+RUN go build -o jamserver ./cmd
 
 FROM alpine:latest
 
-COPY --from=builder /app/jamsualftp /usr/local/bin/jamsualftp
+COPY --from=builder /app/jamserver /usr/local/bin/jamserver
 
-ENTRYPOINT ["/usr/local/bin/jamsualftp"]
+ENTRYPOINT ["/usr/local/bin/jamserver"]

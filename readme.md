@@ -12,7 +12,7 @@ actually some casual tcp server, but let me cook
 - if u want *docker*🐳:
 
 1. change IP in `internal/server/server.go` from _127.0.0.1_ to _0.0.0.0_
-   (port currently hardcoded, but no worries, other will work too)
+   (port currently hardcoded, but no worries, other will work too 2121 because 21 is ftp port for system)
 2. `docker build -t <your_custom_name> .`
 3. `docker run <your_custom_name>`
    or `docker run --name <your_custom_ame> -d -p 2121:2121 jamsualftp`

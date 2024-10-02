@@ -1,4 +1,4 @@
-module jamsual
+module jamserver
 
 go 1.22
 

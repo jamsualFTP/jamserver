@@ -3,17 +3,19 @@ package server
 import (
 	"fmt"
 	"io"
-	"jamsual/pkg/utils"
+	"jamserver/pkg/utils"
 	"log"
 	"net"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
 
 // NOTE: https://www.rfc-editor.org/rfc/rfc959
-// TODO : implement auth system,
+// TODO : implement auth system;
+//        add dns (optional)
 
 var (
 	connectionCounter int
@@ -67,10 +69,11 @@ func HandleConnection(conn *net.TCPConn, id int) {
 		mu.Unlock()
 	}()
 
-	conn.Write([]byte(fmt.Sprintf("220 Welcome to jamsualFTP server, user %v! \n\n", id)))
+	time.Sleep(time.Second * 2)
+	fmt.Fprintf(conn, "\033[36m220 \033[0mWelcome to jamsualFTP server, user %v! \n\n", id)
 
 	for {
-		buffer := make([]byte, 128)
+		buffer := make([]byte, 1024) // request buffer
 		n, err := conn.Read(buffer)
 
 		if err == io.EOF {
@@ -81,32 +84,32 @@ func HandleConnection(conn *net.TCPConn, id int) {
 		command := strings.ToUpper(part[0])
 		args := part[1:]
 		HandleCommands(conn, command, args)
-
 	}
 }
 
 // using command pattern for a while, maybe will refactor to COR
 func HandleCommands(conn *net.TCPConn, command string, args []string) {
 	commands := map[string]func(*net.TCPConn, []string){
-		"ECHO":     handleEcho,
-		"HELLO":    handleHello,
-		"REGISTER": handleRegister,
-		"LOGIN":    handleLogin,
+		"ECHO": handleEcho,
+		"HLLO": handleHello,
+		"RGTR": handleRegister,
+		"USER": handleLogin,
+		"QUIT": handleQuit,
 	}
 
 	if result, ok := commands[command]; ok {
 		result(conn, args)
 	} else {
-		conn.Write([]byte("502, command not implemented \n\n"))
+		conn.Write([]byte("\033[31m502  \033[0mCommand not implemented.\n\n"))
 	}
 }
 
 func handleEcho(conn *net.TCPConn, value []string) {
-	conn.Write([]byte(fmt.Sprintf("%v \n\n", strings.Join(value, " "))))
+	fmt.Fprintf(conn, "\033[32m200  \033[0m%v \n\n", strings.Join(value, " "))
 }
 
 func handleHello(conn *net.TCPConn, value []string) {
-	conn.Write([]byte("Hello \n\n"))
+	conn.Write([]byte("\033[32m200  \033[0mHello\n\n"))
 }
 
 type Credentials struct {
@@ -158,10 +161,27 @@ func handleRegister(conn *net.TCPConn, value []string) {
 	}
 
 	fmt.Printf("New user registered: %v", newUser)
-	conn.Write([]byte(fmt.Sprintf("Successfully registered. Your login: %v \n\n", newUser.Login)))
+	fmt.Fprintf(conn, "\033[32m200  \033[0mSuccessfully registered. Your login: %v \n\n", newUser.Login)
 }
 
 func handleLogin(conn *net.TCPConn, value []string) {
 	// bcrypt.CompareHashAndPassword
 	// TODO: make some cool custom tcp client: auto highlighting keywords, more cool sh!
+
+	if len(value) < 1 {
+		conn.Write([]byte("\033[31m501  \033[0mNo username provided, try again.\n\n"))
+		return
+	}
+
+	if len(value) > 1 {
+		conn.Write([]byte("\033[31m501  \033[0mUse one username..\n\n"))
+		return
+	}
+
+	// TODO: handle more cases with codes. add corect login, add color pkg and replace with inline
+	fmt.Print(value)
+}
+
+func handleQuit(conn *net.TCPConn, _ []string) {
+	conn.Close()
 }
