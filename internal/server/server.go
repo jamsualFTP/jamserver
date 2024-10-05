@@ -60,55 +60,74 @@ func Run() error {
 	}
 }
 
-func HandleConnection(conn *net.TCPConn, id int) {
-	defer func() {
-		conn.Close()
-		mu.Lock()
-		delete(activeConnections, id)
-		fmt.Printf("Connection %v closed and removed from active list\n", id)
-		mu.Unlock()
-	}()
+func HandleDisconnect(conn *net.TCPConn, id int) {
+	mu.Lock()
+	defer mu.Unlock()
 
-	time.Sleep(time.Second * 2)
+	if err := conn.Close(); err != nil {
+		fmt.Printf("Error closing connection %v: %v\n", id, err)
+	}
+
+	delete(activeConnections, id)
+	fmt.Printf("Connection %v closed and removed from active list\n", id)
+}
+
+func HandleConnection(conn *net.TCPConn, id int) {
+	quitChan := make(chan bool)
+	defer HandleDisconnect(conn, id)
+
+	time.Sleep(time.Second)
 	fmt.Fprintf(conn, "\033[36m220 \033[0mWelcome to jamsualFTP server, user %v! \n\n", id)
 
 	for {
-		buffer := make([]byte, 1024) // request buffer
-		n, err := conn.Read(buffer)
-
-		if err == io.EOF {
+		select {
+		case <-quitChan:
+			fmt.Println("SADASD")
 			return
+		default:
+			buffer := make([]byte, 1024) // request buffer
+			n, err := conn.Read(buffer)
+
+			if err == io.EOF {
+				return
+			}
+
+			if err != nil {
+				fmt.Printf("Error reading from connection %v: %v\n", id, err)
+				return
+			}
+
+			str := strings.TrimSpace(string(buffer[:n]))
+			part := strings.Split(str, " ")
+			command := strings.ToUpper(part[0])
+			args := part[1:]
+			go HandleCommands(conn, command, args, quitChan)
 		}
-		str := strings.TrimSpace(string(buffer[:n]))
-		part := strings.Split(str, " ")
-		command := strings.ToUpper(part[0])
-		args := part[1:]
-		HandleCommands(conn, command, args)
 	}
 }
 
 // using command pattern for a while, maybe will refactor to COR
-func HandleCommands(conn *net.TCPConn, command string, args []string) {
-	commands := map[string]func(*net.TCPConn, []string){
+func HandleCommands(conn *net.TCPConn, command string, args []string, quitChan chan bool) {
+	commands := map[string]func(*net.TCPConn, []string, chan<- bool){
 		"ECHO": handleEcho,
 		"HLLO": handleHello,
-		"RGTR": handleRegister,
+		"RGSR": handleRegister,
 		"USER": handleLogin,
 		"QUIT": handleQuit,
 	}
 
 	if result, ok := commands[command]; ok {
-		result(conn, args)
+		result(conn, args, quitChan)
 	} else {
 		conn.Write([]byte("\033[31m502  \033[0mCommand not implemented.\n\n"))
 	}
 }
 
-func handleEcho(conn *net.TCPConn, value []string) {
+func handleEcho(conn *net.TCPConn, value []string, _ chan<- bool) {
 	fmt.Fprintf(conn, "\033[32m200  \033[0m%v \n\n", strings.Join(value, " "))
 }
 
-func handleHello(conn *net.TCPConn, value []string) {
+func handleHello(conn *net.TCPConn, value []string, _ chan<- bool) {
 	conn.Write([]byte("\033[32m200  \033[0mHello\n\n"))
 }
 
@@ -126,7 +145,7 @@ func isLoginUnique(users []Credentials, login string) bool {
 	return true
 }
 
-func handleRegister(conn *net.TCPConn, value []string) {
+func handleRegister(conn *net.TCPConn, value []string, _ chan<- bool) {
 	if len(value) < 2 {
 		conn.Write([]byte("Lack of arguments, exit."))
 		return
@@ -164,7 +183,7 @@ func handleRegister(conn *net.TCPConn, value []string) {
 	fmt.Fprintf(conn, "\033[32m200  \033[0mSuccessfully registered. Your login: %v \n\n", newUser.Login)
 }
 
-func handleLogin(conn *net.TCPConn, value []string) {
+func handleLogin(conn *net.TCPConn, value []string, _ chan<- bool) {
 	// bcrypt.CompareHashAndPassword
 	// TODO: make some cool custom tcp client: auto highlighting keywords, more cool sh!
 
@@ -178,10 +197,12 @@ func handleLogin(conn *net.TCPConn, value []string) {
 		return
 	}
 
-	// TODO: handle more cases with codes. add corect login, add color pkg and replace with inline
+	// TODO: handle more cases with codes. add correct login, add color pkg and replace with inline
 	fmt.Print(value)
 }
 
-func handleQuit(conn *net.TCPConn, _ []string) {
-	conn.Close()
+func handleQuit(conn *net.TCPConn, _ []string, quitChan chan<- bool) {
+	conn.Write([]byte("\033[32m221  \033[0mConnection closed.\n\n"))
+	quitChan <- true
+	close(quitChan)
 }
