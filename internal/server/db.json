@@ -22,5 +22,9 @@
   {
     "login": "hzero",
     "password": "$2a$10$CnEEJxcFvzKN7EHTZpyqdeYLnkUWhmNIhLyRpTPxKxE83CTyEKP2K"
+  },
+  {
+    "login": "pat",
+    "password": "$2a$10$eKDQvxv6fXphlgJfidwG5eObOm9d0EM6zSE.DDt.N6UIoDxwdET3."
   }
 ]

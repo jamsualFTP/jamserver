@@ -2,4 +2,7 @@ module jamserver
 
 go 1.22
 
-require golang.org/x/crypto v0.27.0 // indirect
+require (
+	github.com/TwiN/go-color v1.4.1
+	golang.org/x/crypto v0.27.0
+)

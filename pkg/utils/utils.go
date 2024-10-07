@@ -2,17 +2,8 @@ package utils
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 )
-
-func SetScroll() string {
-	// WARNING: termporary
-	CURSOR_UP_ONE := "\x1b[1A"
-	ERASE_LINE := "\x1b[2K"
-
-	return fmt.Sprint(CURSOR_UP_ONE, ERASE_LINE)
-}
 
 func LoadJSON[T any](filename string) (T, error) {
 	var data T
