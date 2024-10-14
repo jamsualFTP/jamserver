@@ -15,7 +15,6 @@ import (
 )
 
 // NOTE: https://www.rfc-editor.org/rfc/rfc959
-// TODO : implement auth system;
 
 type Session struct {
 	Login         string
@@ -23,23 +22,28 @@ type Session struct {
 }
 
 type Client struct {
-	Conn    *net.TCPConn
 	Session *Session
+	Conn    *net.TCPConn
 }
 
 var (
 	connectionCounter int
 	activeConnections = make(map[int]*Client)
-	mu                sync.Mutex // mutex for  handle concurrent connections
+	mu                sync.Mutex // mutex for handle concurrent connections
 )
 
 func Run() error {
 	// address := "0.0.0.0:2121"
-	address := "127.0.0.1:2121"
+	IP_ADDRESS := "127.0.0.1:"
+	PORT_TCP := "2121"
+	PORT_HELP := "2222"
 
-	tcpAddr, err := net.ResolveTCPAddr("tcp", address)
+	tcpAddrStr := IP_ADDRESS + PORT_TCP
+	helpAddrStr := IP_ADDRESS + PORT_HELP
+
+	tcpAddr, err := net.ResolveTCPAddr("tcp", tcpAddrStr)
 	if err != nil {
-		return fmt.Errorf("resolving address error %w", err)
+		return fmt.Errorf("resolving tcp address error %w", err)
 	}
 	listener, listenErr := net.ListenTCP("tcp", tcpAddr)
 	if listenErr != nil {
@@ -69,9 +73,48 @@ func Run() error {
 		activeConnections[id] = client
 		mu.Unlock()
 
-		addr := conn.RemoteAddr().String()
-		fmt.Printf("Accepted new connection: id = %v! %v \n\n", id, addr)
+		incAddr := conn.RemoteAddr().String()
+		fmt.Printf("Accepted new connection: id = %v! %v \n\n", id, incAddr)
+
 		go HandleConnection(client, id)
+
+		// run second connection to give client new information
+		helpAddr, err := net.ResolveTCPAddr("tcp", helpAddrStr)
+		if err != nil {
+			return fmt.Errorf("HELP resolving address error %v ", err)
+		}
+
+		helpListener, helpListenErr := net.ListenTCP("tcp", helpAddr)
+		if helpListenErr != nil {
+			return fmt.Errorf("HELP listening error %w", listenErr)
+		}
+		defer listener.Close()
+		helpConn, helpAcceptErr := helpListener.AcceptTCP()
+
+		if helpAcceptErr != nil {
+			fmt.Printf("HELP connection error %v", helpAcceptErr)
+		}
+
+		go HandleHelpConnection(helpConn, client)
+
+	}
+}
+
+func HandleHelpConnection(helpConn *net.TCPConn, client *Client) {
+	// mu.Lock()
+	// defer mu.Unlock()
+
+	globalCommands := "echo hllo rgsr user pass quit help"
+	// TODO: add commands
+	sessionCommands := ""
+	if client.Session.Authenticated {
+		helpConn.Write([]byte(globalCommands + sessionCommands))
+	} else {
+		helpConn.Write([]byte(globalCommands))
+	}
+
+	if err := helpConn.Close(); err != nil {
+		fmt.Printf("Error closing connection: %v\n", err)
 	}
 }
 
@@ -93,11 +136,11 @@ func HandleConnection(client *Client, id int) {
 
 	time.Sleep(time.Second)
 	fmt.Fprintf(client.Conn, "\033[36m220  \033[0mWelcome to jamsualFTP server, user %v! \n\n", id)
+	fmt.Fprintf(client.Conn, "Available commands: \n     help, echo, hllo, rgsr, user, pass, quit  \n\n")
 
 	for {
 		select {
 		case <-quitChan:
-			fmt.Println("SADASD")
 			return
 		default:
 			buffer := make([]byte, 1024) // request buffer
@@ -121,7 +164,7 @@ func HandleConnection(client *Client, id int) {
 	}
 }
 
-// using command pattern for a while, maybe will refactor to COR
+// using command pattern for a while, maybe will refactor to COR when annoying
 func HandleCommands(client *Client, command string, args []string, quitChan chan bool) {
 	commands := map[string]func(*Client, []string, chan<- bool){
 		"ECHO": handleEcho,
@@ -130,6 +173,7 @@ func HandleCommands(client *Client, command string, args []string, quitChan chan
 		"USER": handleLogin,
 		"PASS": handlePass,
 		"QUIT": handleQuit,
+		"HELP": handleHelp,
 	}
 
 	if result, ok := commands[command]; ok {
@@ -200,8 +244,6 @@ func handleRegister(client *Client, value []string, _ chan<- bool) {
 }
 
 func handleLogin(client *Client, value []string, _ chan<- bool) {
-	// TODO: make some cool custom tcp client: auto highlighting keywords, prefix when logged in!
-
 	if client.Session.Authenticated {
 		fmt.Fprintf(client.Conn, "\033[33m435  \033[0mYou are already logged in.. \n\n")
 		return
@@ -291,9 +333,14 @@ func handleQuit(client *Client, _ []string, quitChan chan<- bool) {
 	// 	client.Conn.Write([]byte("\033[32m221  \033[0mSuccessfully logged out.\n\n"))
 	// 	return
 	// }
+
 	client.Conn.Write([]byte("\033[32m221  \033[0mConnection closed.\n\n"))
 	client.Session.Authenticated = false
-	client.Session.Login = ""
 	quitChan <- true
+	client.Session.Login = ""
 	close(quitChan)
+}
+
+func handleHelp(client *Client, _ []string, _ chan<- bool) {
+	fmt.Fprintf(client.Conn, "\033[32m200  \033[0mAvailable commands: \n     help, echo, hllo, rgsr, user, pass, quit  \n\n")
 }
