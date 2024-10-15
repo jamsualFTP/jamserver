@@ -54,6 +54,20 @@ func Run() error {
 	fmt.Println("jamsualFTP started!")
 	fmt.Printf("Listening on %v at port %v \n", tcpAddr.IP, tcpAddr.Port)
 
+	// run second connection to give client new information
+	helpAddr, helpErr := net.ResolveTCPAddr("tcp", helpAddrStr)
+	if helpErr != nil {
+		return fmt.Errorf("HELP resolving address error %v ", err)
+	}
+
+	helpListener, helpListenErr := net.ListenTCP("tcp", helpAddr)
+
+	if helpListenErr != nil {
+		return fmt.Errorf("HELP listening error %v", listenErr)
+	}
+
+	defer helpListener.Close()
+
 	for {
 		fmt.Print("Waiting for upcoming connections... \n\n")
 		conn, acceptErr := listener.AcceptTCP()
@@ -74,21 +88,11 @@ func Run() error {
 		mu.Unlock()
 
 		incAddr := conn.RemoteAddr().String()
+
 		fmt.Printf("Accepted new connection: id = %v! %v \n\n", id, incAddr)
 
 		go HandleConnection(client, id)
 
-		// run second connection to give client new information
-		helpAddr, err := net.ResolveTCPAddr("tcp", helpAddrStr)
-		if err != nil {
-			return fmt.Errorf("HELP resolving address error %v ", err)
-		}
-
-		helpListener, helpListenErr := net.ListenTCP("tcp", helpAddr)
-		if helpListenErr != nil {
-			return fmt.Errorf("HELP listening error %w", listenErr)
-		}
-		defer listener.Close()
 		helpConn, helpAcceptErr := helpListener.AcceptTCP()
 
 		if helpAcceptErr != nil {
@@ -113,9 +117,12 @@ func HandleHelpConnection(helpConn *net.TCPConn, client *Client) {
 		helpConn.Write([]byte(globalCommands))
 	}
 
-	if err := helpConn.Close(); err != nil {
-		fmt.Printf("Error closing connection: %v\n", err)
-	}
+	go func() {
+		if err := helpConn.Close(); err != nil {
+			fmt.Printf("Error closing connection: %v\n", err)
+		}
+		fmt.Print("SADAS")
+	}()
 }
 
 func HandleDisconnect(client *Client, id int) {
