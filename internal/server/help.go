@@ -11,14 +11,15 @@ func HandleHelpConnection(helpConn *net.TCPConn, client *Client) {
 
 	globalCommands := "help echo hllo rgsr user pass quit "
 	// TODO: add commands
-	sessionCommands := "recv"
+	sessionCommands := "pasv"
+
 	if client.Session.Authenticated {
 		helpConn.Write([]byte(globalCommands + sessionCommands))
 	} else {
 		helpConn.Write([]byte(globalCommands))
 	}
 
-	go func() {
+	defer func() {
 		if err := helpConn.Close(); err != nil {
 			fmt.Printf("Error closing connection: %v\n", err)
 		}

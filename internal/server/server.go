@@ -15,6 +15,7 @@ import (
 type Session struct {
 	Login         string
 	Authenticated bool
+	Passive       bool
 }
 
 type Client struct {

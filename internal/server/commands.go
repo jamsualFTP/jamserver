@@ -5,6 +5,7 @@ import (
 	"jamserver/internal/dtp"
 	"jamserver/pkg/utils"
 	"log"
+	"net"
 	"slices"
 	"strings"
 
@@ -185,10 +186,55 @@ func handleQuit(client *Client, _ []string, quitChan chan<- bool) {
 }
 
 func handleHelp(client *Client, _ []string, _ chan<- bool) {
-	fmt.Fprintf(client.Conn, "\033[32m200  \033[0mAvailable commands: \n     help, echo, hllo, rgsr, user, pass, quit  \n\n")
+	if client.Session.Authenticated {
+		fmt.Fprintf(client.Conn, "\033[32m200  \033[0mAvailable commands: \n     help, echo, hllo, rgsr, user, pass, quit, pasv  \n\n")
+	} else {
+		fmt.Fprintf(client.Conn, "\033[32m200  \033[0mAvailable commands: \n     help, echo, hllo, rgsr, user, pass, quit  \n\n")
+	}
 }
 
 func handlePassive(client *Client, _ []string, _ chan<- bool) {
-	dtp.InitDTPConnection()
-	fmt.Fprintf(client.Conn, "\033[32m227  \033[0m Entering Passive Mode. (%v, ip, ip, ip, %v, %v) \n\n", ip, port1, port2) // r
+	if !client.Session.Authenticated {
+		client.Conn.Write([]byte("\033[31m503  \033[0mNot logged in.\n\n"))
+		return
+	}
+	if !client.Session.Passive {
+		dtpListener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			fmt.Printf("Error creating listener: %v\n", err)
+			client.Conn.Write([]byte("\033[31m425  \033[0mCan't open data connection.\n\n"))
+			return
+		}
+
+		addr := dtpListener.Addr().(*net.TCPAddr)
+		port := addr.Port
+		port1 := port / 256
+		port2 := port % 256
+
+		ipParts := addr.IP.To4()
+		if ipParts == nil {
+			client.Conn.Write([]byte("\033[31m425  \033[0mCan't open data connection.\n\n"))
+			_ = dtpListener.Close()
+			return
+		}
+
+		fmt.Fprintf(client.Conn, "\033[32m227  \033[0mEntering Passive Mode (%d,%d,%d,%d,%d,%d).\n\n",
+			ipParts[0], ipParts[1], ipParts[2], ipParts[3], port1, port2)
+
+		client.Session.Passive = true
+		go func() {
+			defer dtpListener.Close()
+
+			conn, acceptErr := dtpListener.Accept()
+			if acceptErr != nil {
+				fmt.Printf("Error accepting DTP connection: %v\n", acceptErr)
+				return
+			}
+
+			fmt.Printf("DTP connection established: %v\n", conn.RemoteAddr())
+			dtp.HandleDTPConnection(conn)
+		}()
+	} else {
+		client.Conn.Write([]byte("\033[31m527  \033[0mYou are already in Passive Mode.\n\n"))
+	}
 }
