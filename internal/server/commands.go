@@ -70,7 +70,7 @@ func handleRegister(client *Client, value []string, _ chan<- bool) {
 	newUser.Login = value[0]
 	newUser.Password = string(hashedPassword)
 
-	users, err := utils.LoadJSON[[]Credentials]("internal/server/db.json")
+	users, err := utils.LoadJSON[[]Credentials]("app/db.json")
 	if err != nil {
 		log.Fatal("something went wrong with loading file. ", err)
 	}
@@ -82,7 +82,7 @@ func handleRegister(client *Client, value []string, _ chan<- bool) {
 
 	users = append(users, *newUser)
 
-	err = utils.SaveJSON("internal/server/db.json", users)
+	err = utils.SaveJSON("app/db.json", users)
 	if err != nil {
 		log.Printf("Error saving file: %v\n", err)
 		client.Conn.Write([]byte("Server error, please try again later.\n"))
@@ -109,7 +109,7 @@ func handleLogin(client *Client, value []string, _ chan<- bool) {
 		return
 	}
 
-	users, err := utils.LoadJSON[[]Credentials]("internal/server/db.json")
+	users, err := utils.LoadJSON[[]Credentials]("app/db.json")
 	if err != nil {
 		log.Fatal("something went wrong with loading file. ", err)
 	}
@@ -148,7 +148,7 @@ func handlePass(client *Client, value []string, quitChan chan<- bool) {
 
 	password := value[0]
 	if len(password) > 0 {
-		users, err := utils.LoadJSON[[]Credentials]("internal/server/db.json")
+		users, err := utils.LoadJSON[[]Credentials]("app/db.json")
 		if err != nil {
 			log.Fatal("something went wrong with loading file. ", err)
 		}
@@ -198,8 +198,10 @@ func handlePassive(client *Client, _ []string, _ chan<- bool) {
 		client.Conn.Write([]byte("\033[31m503  \033[0mNot logged in.\n\n"))
 		return
 	}
+
 	if !client.Session.Passive {
-		dtpListener, err := net.Listen("tcp", "127.0.0.1:0")
+		// dtpListener, err := net.Listen("tcp", "127.0.0.1:0")
+		dtpListener, err := net.Listen("tcp", "jamserver:0")
 		if err != nil {
 			fmt.Printf("Error creating listener: %v\n", err)
 			client.Conn.Write([]byte("\033[31m425  \033[0mCan't open data connection.\n\n"))
@@ -214,7 +216,7 @@ func handlePassive(client *Client, _ []string, _ chan<- bool) {
 		ipParts := addr.IP.To4()
 		if ipParts == nil {
 			client.Conn.Write([]byte("\033[31m425  \033[0mCan't open data connection.\n\n"))
-			_ = dtpListener.Close()
+			dtpListener.Close()
 			return
 		}
 
@@ -222,6 +224,7 @@ func handlePassive(client *Client, _ []string, _ chan<- bool) {
 			ipParts[0], ipParts[1], ipParts[2], ipParts[3], port1, port2)
 
 		client.Session.Passive = true
+
 		go func() {
 			defer dtpListener.Close()
 

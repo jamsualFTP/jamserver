@@ -31,7 +31,8 @@ var (
 
 func Run() error {
 	// address := "0.0.0.0:2121"
-	IP_ADDRESS := "127.0.0.1:"
+	// IP_ADDRESS := "127.0.0.1:"
+	IP_ADDRESS := "jamserver:"
 	PORT_TCP := "2121"
 	PORT_HELP := "2222"
 
