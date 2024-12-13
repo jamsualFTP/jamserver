@@ -3,20 +3,35 @@ package server
 import (
 	"fmt"
 	"net"
+	"strings"
 )
 
 func HandleHelpConnection(helpConn *net.TCPConn, client *Client) {
-	// mu.Lock()
-	// defer mu.Unlock()
+	var availableCommands []string
 
-	globalCommands := "help echo hllo rgsr user pass quit "
-	// TODO: add commands
-	sessionCommands := "pasv"
+	globalCommands := []string{
+		"help",
+		"echo",
+		"hllo",
+		"rgsr",
+		"user",
+		"pass",
+		"quit",
+	}
+	availableCommands = append(availableCommands, globalCommands...)
 
 	if client.Session.Authenticated {
-		helpConn.Write([]byte(globalCommands + sessionCommands))
-	} else {
-		helpConn.Write([]byte(globalCommands))
+		sessionCommands := []string{
+			"pasv",
+			"list",
+		}
+		availableCommands = append(availableCommands, sessionCommands...)
+	}
+
+	commandList := []byte(strings.Join(availableCommands, " "))
+
+	if _, err := helpConn.Write(commandList); err != nil {
+		fmt.Printf("Error writing commands: %v\n", err)
 	}
 
 	defer func() {

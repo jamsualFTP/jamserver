@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"io"
+	"jamserver/internal/jfs"
 	"log"
 	"net"
 	"strings"
@@ -13,9 +14,12 @@ import (
 // NOTE: https://www.rfc-editor.org/rfc/rfc959
 
 type Session struct {
+	DTPConnection net.Conn
+	DTPListener   net.Listener
 	Login         string
 	Authenticated bool
 	Passive       bool
+	mu            sync.Mutex
 }
 
 type Client struct {
@@ -26,7 +30,11 @@ type Client struct {
 var (
 	connectionCounter int
 	activeConnections = make(map[int]*Client)
-	mu                sync.Mutex // mutex for handle concurrent connections
+	mu                sync.Mutex // mutex to handle concurrent connections
+
+	globalFileSystem *jfs.FileSystem
+	// WARNING: TALK TO TEACHER ABOUT POSSIBILITIES!!!
+	// 1. global fs = selfhosted simple server with cli ux focus, for one user with autosorting files based on file signatures (or extensions == faster??)
 )
 
 func Run() error {
@@ -38,6 +46,8 @@ func Run() error {
 
 	tcpAddrStr := IP_ADDRESS + PORT_TCP
 	helpAddrStr := IP_ADDRESS + PORT_HELP
+
+	BASE_PATH := "app/jam_filesystem"
 
 	tcpAddr, err := net.ResolveTCPAddr("tcp", tcpAddrStr)
 	if err != nil {
@@ -51,7 +61,17 @@ func Run() error {
 	defer listener.Close()
 
 	fmt.Println("jamsualFTP started!")
+
 	fmt.Printf("Listening on %v at port %v \n", tcpAddr.IP, tcpAddr.Port)
+
+	fmt.Println("File System Initialization...")
+
+	fErr := jfs.InitializeFS(BASE_PATH)
+	if fErr != nil {
+		return fmt.Errorf("initializing FS error : %v", err)
+	}
+
+	globalFileSystem = jfs.NewFileSystem(BASE_PATH)
 
 	// run second connection to give client new information
 	helpAddr, helpErr := net.ResolveTCPAddr("tcp", helpAddrStr)
