@@ -5,8 +5,6 @@ import (
 	"net"
 )
 
-// func HandleDTPConnection(conn net.Conn) {}
-
 func SendData(conn net.Conn, data string) error {
 	defer conn.Close()
 

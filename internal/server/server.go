@@ -14,12 +14,13 @@ import (
 // NOTE: https://www.rfc-editor.org/rfc/rfc959
 
 type Session struct {
-	DTPConnection net.Conn
-	DTPListener   net.Listener
-	Login         string
-	Authenticated bool
-	Passive       bool
-	mu            sync.Mutex
+	DTPConnection  net.Conn
+	HelpConnection net.Conn
+	DTPListener    net.Listener
+	Login          string
+	Authenticated  bool
+	Passive        bool
+	mu             sync.Mutex
 }
 
 type Client struct {
@@ -33,13 +34,9 @@ var (
 	mu                sync.Mutex // mutex to handle concurrent connections
 
 	globalFileSystem *jfs.FileSystem
-	// WARNING: TALK TO TEACHER ABOUT POSSIBILITIES!!!
-	// 1. global fs = selfhosted simple server with cli ux focus, for one user with autosorting files based on file signatures (or extensions == faster??)
 )
 
 func Run() error {
-	// address := "0.0.0.0:2121"
-	// IP_ADDRESS := "127.0.0.1:"
 	IP_ADDRESS := "jamserver:"
 	PORT_TCP := "2121"
 	PORT_HELP := "2222"
@@ -53,15 +50,14 @@ func Run() error {
 	if err != nil {
 		return fmt.Errorf("resolving tcp address error %w", err)
 	}
-	listener, listenErr := net.ListenTCP("tcp", tcpAddr)
 
+	listener, listenErr := net.ListenTCP("tcp", tcpAddr)
 	if listenErr != nil {
 		return fmt.Errorf("listening error %w", listenErr)
 	}
 	defer listener.Close()
 
 	fmt.Println("jamsualFTP started!")
-
 	fmt.Printf("Listening on %v at port %v \n", tcpAddr.IP, tcpAddr.Port)
 
 	fmt.Println("File System Initialization...")
@@ -73,19 +69,18 @@ func Run() error {
 
 	globalFileSystem = jfs.NewFileSystem(BASE_PATH)
 
-	// run second connection to give client new information
 	helpAddr, helpErr := net.ResolveTCPAddr("tcp", helpAddrStr)
 	if helpErr != nil {
 		return fmt.Errorf("HELP resolving address error %v ", helpErr)
 	}
 
 	helpListener, helpListenErr := net.ListenTCP("tcp", helpAddr)
-
 	if helpListenErr != nil {
 		return fmt.Errorf("HELP listening error %v", helpListenErr)
 	}
-
 	defer helpListener.Close()
+
+	go handleHelpListener(helpListener)
 
 	for {
 		fmt.Print("Waiting for upcoming connections... \n\n")
@@ -107,19 +102,9 @@ func Run() error {
 		mu.Unlock()
 
 		incAddr := conn.RemoteAddr().String()
-
 		fmt.Printf("Accepted new connection: id = %v! %v \n\n", id, incAddr)
 
 		go HandleConnection(client, id)
-
-		helpConn, helpAcceptErr := helpListener.AcceptTCP()
-
-		if helpAcceptErr != nil {
-			fmt.Printf("HELP connection error %v", helpAcceptErr)
-		}
-
-		go HandleHelpConnection(helpConn, client)
-
 	}
 }
 
@@ -130,7 +115,11 @@ func HandleDisconnect(client *Client, id int) {
 	if err := client.Conn.Close(); err != nil {
 		fmt.Printf("Error closing connection %v: %v\n", id, err)
 	}
+	if client.Session.HelpConnection != nil {
+		client.Session.HelpConnection.Close()
+	}
 
+	client.Session = nil
 	delete(activeConnections, id)
 	fmt.Printf("Connection %v closed and removed from active list\n", id)
 }

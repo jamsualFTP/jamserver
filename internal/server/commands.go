@@ -2,15 +2,25 @@ package server
 
 import (
 	"fmt"
+	"io"
 	"jamserver/pkg/utils"
 	"log"
 	"net"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
+
+func closeDTPConnection(client *Client) {
+	if client.Session.DTPConnection != nil {
+		client.Session.DTPConnection.Close()
+		client.Session.DTPConnection = nil
+	}
+	client.Session.Passive = false // Reset passive mode state
+}
 
 // using command pattern for a while, maybe will refactor to COR when annoying
 func HandleCommands(client *Client, command string, args []string, quitChan chan bool) {
@@ -24,9 +34,14 @@ func HandleCommands(client *Client, command string, args []string, quitChan chan
 		"HELP": handleHelp,
 		"PASV": handlePassive,
 		"LIST": handleList,
+		"RETR": handleRetrieve,
+		"STOR": handleStore,
 	}
 
 	if result, ok := commands[command]; ok {
+		if command != "LIST" && command != "RETR" && command != "STOR" {
+			closeDTPConnection(client) // Ensure no residual DTP state
+		}
 		result(client, args, quitChan)
 	} else {
 		client.Conn.Write([]byte("\033[31m502  \033[0mCommand not implemented.\n\n"))
@@ -165,7 +180,17 @@ func handlePass(client *Client, value []string, quitChan chan<- bool) {
 					return
 				} else {
 					client.Session.Authenticated = true
+
 					fmt.Fprintf(client.Conn, "\033[32m230  \033[0mUser logged in, proceed. \n\n")
+					// Update help connection with expanded commands
+					if client.Session.HelpConnection != nil {
+						availableCommands := getAvailableCommands(client) // Expanded commands after login
+						commandList := strings.Join(availableCommands, " ") + "\n"
+
+						if _, err := client.Session.HelpConnection.Write([]byte(commandList)); err != nil {
+							log.Printf("Error updating commands on help connection: %v\n", err)
+						}
+					}
 					return
 				}
 			}
@@ -192,7 +217,7 @@ func handleQuit(client *Client, _ []string, quitChan chan<- bool) {
 
 func handleHelp(client *Client, _ []string, _ chan<- bool) {
 	if client.Session.Authenticated {
-		fmt.Fprintf(client.Conn, "\033[32m200  \033[0mAvailable commands: \n     help, echo, hllo, rgsr, user, pass, quit, pasv  \n\n")
+		fmt.Fprintf(client.Conn, "\033[32m200  \033[0mAvailable commands: \n     help, echo, hllo, rgsr, user, pass, quit, pasv, list, retr, stor  \n\n")
 		return
 	} else {
 		fmt.Fprintf(client.Conn, "\033[32m200  \033[0mAvailable commands: \n     help, echo, hllo, rgsr, user, pass, quit  \n\n")
@@ -203,6 +228,11 @@ func handleHelp(client *Client, _ []string, _ chan<- bool) {
 func handlePassive(client *Client, _ []string, done chan<- bool) {
 	if !client.Session.Authenticated {
 		client.Conn.Write([]byte("\033[31m503  \033[0mNot logged in.\n\n"))
+		return
+	}
+
+	if client.Session.Passive {
+		client.Conn.Write([]byte("\033[31m527  \033[0mAlready in Passive Mode.\n\n"))
 		return
 	}
 
@@ -340,4 +370,111 @@ func handleList(client *Client, args []string, done chan<- bool) {
 
 	// Send transfer complete message
 	client.Conn.Write([]byte("\033[32m226  \033[0mDirectory send OK. \n\n"))
+}
+
+func handleRetrieve(client *Client, args []string, _ chan<- bool) {
+	if len(args) < 1 {
+		client.Conn.Write([]byte("\033[31m501 \033[0mSyntax error in parameters or arguments.\n   Usage: RETR <filename>\n\n"))
+		return
+	}
+
+	filename := args[0]
+
+	fileData, err := globalFileSystem.ReadFile(filename)
+	if err != nil {
+		fmt.Fprintf(client.Conn, "\033[31m550 \033[0mFile not found or access denied: %s\n\n", filename)
+		return
+	}
+
+	// Check if client is in passive mode
+	if client.Session.DTPConnection == nil {
+		client.Conn.Write([]byte("\033[31m425 \033[0mUse PASV or PORT first.\n\n"))
+		return
+	}
+
+	fmt.Fprintf(client.Conn, "\033[32m150 \033[0mOpening data connection for %s.\n\n", filename)
+
+	// Write the file data to the data connection
+	n, err := client.Session.DTPConnection.Write(fileData)
+	if err != nil {
+		fmt.Fprintf(client.Conn, "\033[31m426 \033[0mConnection closed; transfer aborted: %v\n\n", err)
+		return
+	}
+
+	fmt.Fprintf(client.Conn, "\033[32m226 \033[0mTransfer complete. Total bytes sent: %d.\n\n", n)
+
+	// Close the data connection
+	client.Session.DTPConnection.Close()
+	client.Session.DTPConnection = nil
+	client.Session.Passive = false
+}
+
+func handleStore(client *Client, args []string, quitChan chan<- bool) {
+	if len(args) < 1 {
+		fmt.Fprintf(client.Conn, "\033[31m501 \033[0mSyntax error in parameters or arguments. Usage: STOR <filename>\n\n")
+		return
+	}
+
+	filename := args[0]
+	filepath := fmt.Sprintf("app/jam_filesystem/%s", filename)
+
+	// Check if client is in passive mode
+	if client.Session.DTPConnection == nil {
+		fmt.Fprintf(client.Conn, "\033[31m425 \033[0mUse PASV or PORT first.\n\n")
+		return
+	}
+
+	// Create or open the file for writing
+	file, err := os.Create(filepath)
+	if err != nil {
+		fmt.Fprintf(client.Conn, "\033[31m550 \033[0mCould not create file: %s\n\n", filename)
+		return
+	}
+	defer file.Close()
+
+	fmt.Fprintf(client.Conn, "\033[32m150 \033[0mOpening data connection for %s.\n\n", filename)
+
+	client.Session.DTPConnection.SetReadDeadline(time.Now().Add(30 * time.Second))
+
+	// Read data from the data connection and write to file
+	buf := make([]byte, 1024)
+	totalBytes := 0
+
+	for {
+		n, err := client.Session.DTPConnection.Read(buf)
+		print(n, err)
+		if err != nil {
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				fmt.Fprintf(client.Conn, "\033[31m426 \033[0mData connection timed out.\n\n")
+				return
+			}
+			if err == io.EOF {
+				break // Exit loop on EOF
+			}
+
+			fmt.Fprintf(client.Conn, "\033[31m426 \033[0mConnection closed; transfer aborted: %v\n\n", err)
+			return
+		}
+
+		// Write to file
+		_, writeErr := file.Write(buf[:n])
+		if writeErr != nil {
+			fmt.Fprintf(client.Conn, "\033[31m426 \033[0mError writing file: %v\n\n", writeErr)
+			return
+		}
+
+		totalBytes += n
+	}
+
+	client.Session.DTPConnection.SetReadDeadline(time.Time{})
+
+	// Send success response
+	fmt.Fprintf(client.Conn, "\033[32m226 \033[0mTransfer complete. Total bytes received: %d.\n\n", totalBytes)
+
+	// Properly close the data connection
+	if client.Session.DTPConnection != nil {
+		client.Session.DTPConnection.Close()
+		client.Session.DTPConnection = nil
+	}
+	client.Session.Passive = false
 }
