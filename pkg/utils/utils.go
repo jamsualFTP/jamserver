@@ -75,7 +75,6 @@ func ScanAndUpdateChildren(dirPath string, children map[string]interface{}) erro
 			}
 		}
 
-		// add to children map
 		children[file.Name()] = metadata
 	}
 

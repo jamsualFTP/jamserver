@@ -60,6 +60,16 @@ func HandleHelpConnection(helpConn *net.TCPConn, associatedClient *Client) {
 	}()
 
 	for {
+		if associatedClient == nil {
+			fmt.Println("Associated client is nil, closing help connection.")
+			return
+		}
+
+		if associatedClient.Session == nil {
+			fmt.Println("Associated Session is nil, closing help connection.")
+			return
+		}
+
 		// Get available commands for the associated client
 		availableCommands := getAvailableCommands(associatedClient)
 		commandList := strings.Join(availableCommands, " ") + "\n"
@@ -70,14 +80,17 @@ func HandleHelpConnection(helpConn *net.TCPConn, associatedClient *Client) {
 			return
 		}
 
-		// Update every 5 seconds
-		time.Sleep(5 * time.Second)
+		// Update every 15 seconds
+		time.Sleep(15 * time.Second)
 	}
 }
 
 func getAvailableCommands(client *Client) []string {
 	globalCommands := []string{"help", "echo", "hllo", "rgsr", "user", "pass", "quit"}
 
+	if client == nil || client.Session == nil {
+		return globalCommands
+	}
 	client.Session.mu.Lock()
 	defer client.Session.mu.Unlock()
 

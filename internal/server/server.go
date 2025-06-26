@@ -37,7 +37,7 @@ var (
 )
 
 func Run() error {
-	IP_ADDRESS := "jamserver:"
+	IP_ADDRESS := "0.0.0.0:"
 	PORT_TCP := "2121"
 	PORT_HELP := "2222"
 
@@ -57,7 +57,7 @@ func Run() error {
 	}
 	defer listener.Close()
 
-	fmt.Println("jamsualFTP started!")
+	fmt.Println("jamsualFT started!")
 	fmt.Printf("Listening on %v at port %v \n", tcpAddr.IP, tcpAddr.Port)
 
 	fmt.Println("File System Initialization...")
@@ -108,17 +108,24 @@ func Run() error {
 	}
 }
 
-func HandleDisconnect(client *Client, id int) {
+func HandleDisconnect(client *Client, id int, quitChan chan bool) {
 	mu.Lock()
 	defer mu.Unlock()
 
 	if err := client.Conn.Close(); err != nil {
 		fmt.Printf("Error closing connection %v: %v\n", id, err)
 	}
-	if client.Session.HelpConnection != nil {
-		client.Session.HelpConnection.Close()
+
+	if client.Session != nil && client.Session.HelpConnection != nil {
+		helpConn := client.Session.HelpConnection
+		client.Session.HelpConnection = nil
+		err := helpConn.Close()
+		if err != nil {
+			fmt.Printf("Error closing help connection: %v\n, %v", id, err)
+		}
 	}
 
+	close(quitChan)
 	client.Session = nil
 	delete(activeConnections, id)
 	fmt.Printf("Connection %v closed and removed from active list\n", id)
@@ -126,10 +133,10 @@ func HandleDisconnect(client *Client, id int) {
 
 func HandleConnection(client *Client, id int) {
 	quitChan := make(chan bool)
-	defer HandleDisconnect(client, id)
+	defer HandleDisconnect(client, id, quitChan)
 
 	time.Sleep(time.Second)
-	fmt.Fprintf(client.Conn, "\033[36m220  \033[0mWelcome to jamsualFTP server, user %v! \n\n", id)
+	fmt.Fprintf(client.Conn, "\033[36m220  \033[0mWelcome to jamsualFT server, user %v! \n\n", id)
 	fmt.Fprintf(client.Conn, "Available commands: \n     help, echo, hllo, rgsr, user, pass, quit  \n\n")
 
 	for {
@@ -153,7 +160,7 @@ func HandleConnection(client *Client, id int) {
 			part := strings.Split(str, " ")
 			command := strings.ToUpper(part[0])
 			args := part[1:]
-			go HandleCommands(client, command, args, quitChan)
+			go HandleCommands(client, command, args)
 		}
 	}
 }

@@ -11,7 +11,7 @@ RUN go mod download
 
 COPY . .
 
-RUN go build -o jamserver ./cmd
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build  -ldflags="-w -s" -o jamserver ./cmd
 
 FROM alpine:latest
 COPY --from=builder /app/jamserver /usr/local/bin/jamserver

@@ -1,12 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"jamserver/pkg/utils"
 	"log"
 	"net"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -23,8 +23,8 @@ func closeDTPConnection(client *Client) {
 }
 
 // using command pattern for a while, maybe will refactor to COR when annoying
-func HandleCommands(client *Client, command string, args []string, quitChan chan bool) {
-	commands := map[string]func(*Client, []string, chan<- bool){
+func HandleCommands(client *Client, command string, args []string) {
+	commands := map[string]func(*Client, []string){
 		"ECHO": handleEcho,
 		"HLLO": handleHello,
 		"RGSR": handleRegister,
@@ -42,18 +42,18 @@ func HandleCommands(client *Client, command string, args []string, quitChan chan
 		if command != "LIST" && command != "RETR" && command != "STOR" {
 			closeDTPConnection(client) // Ensure no residual DTP state
 		}
-		result(client, args, quitChan)
+		result(client, args)
 	} else {
 		client.Conn.Write([]byte("\033[31m502  \033[0mCommand not implemented.\n\n"))
 	}
 }
 
-func handleEcho(client *Client, value []string, _ chan<- bool) {
+func handleEcho(client *Client, value []string) {
 	fmt.Fprintf(client.Conn, "\033[32m200  \033[0m%v \n\n", strings.Join(value, " "))
 }
 
-func handleHello(client *Client, _ []string, _ chan<- bool) {
-	client.Conn.Write([]byte("\033[32m200  \033[0mHello\n\n"))
+func handleHello(client *Client, _ []string) {
+	fmt.Fprintf(client.Conn, "\033[32m200  \033[0mHello\n\n")
 }
 
 type Credentials struct {
@@ -70,15 +70,15 @@ func isLoginUnique(users []Credentials, login string) bool {
 	return true
 }
 
-func handleRegister(client *Client, value []string, _ chan<- bool) {
+func handleRegister(client *Client, value []string) {
 	if len(value) < 2 {
-		client.Conn.Write([]byte("Lack of arguments, exit."))
+		client.Conn.Write([]byte("\033[31m501  \033[0mLack of arguments, exit.\n\n"))
 		return
 	}
 
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(value[1]), 10)
 	if err != nil {
-		client.Conn.Write([]byte("Error generating password hash, maybe password is too long?"))
+		client.Conn.Write([]byte("\033[31m451  \033[0mError generating password hash, maybe password is too long?\n\n"))
 		return
 	}
 
@@ -89,10 +89,12 @@ func handleRegister(client *Client, value []string, _ chan<- bool) {
 	users, err := utils.LoadJSON[[]Credentials]("app/db.json")
 	if err != nil {
 		log.Fatal("something went wrong with loading file. ", err)
+		client.Conn.Write([]byte("\033[31m451  \033[0mLocal server error.\n\n"))
+		return
 	}
 
 	if !isLoginUnique(users, newUser.Login) {
-		client.Conn.Write([]byte("Username exists, try again with different login. \n"))
+		client.Conn.Write([]byte("\033[31m530  \033[0mUsername exists, try again with different login. \n\n"))
 		return
 	}
 
@@ -101,7 +103,7 @@ func handleRegister(client *Client, value []string, _ chan<- bool) {
 	err = utils.SaveJSON("app/db.json", users)
 	if err != nil {
 		log.Printf("Error saving file: %v\n", err)
-		client.Conn.Write([]byte("Server error, please try again later.\n"))
+		client.Conn.Write([]byte("\033[31m451  \033[0mServer error, please try again later.\n\n"))
 		return
 	}
 
@@ -109,7 +111,7 @@ func handleRegister(client *Client, value []string, _ chan<- bool) {
 	fmt.Fprintf(client.Conn, "\033[32m200  \033[0mSuccessfully registered. Your login: %v \n\n", newUser.Login)
 }
 
-func handleLogin(client *Client, value []string, _ chan<- bool) {
+func handleLogin(client *Client, value []string) {
 	if client.Session.Authenticated {
 		fmt.Fprintf(client.Conn, "\033[33m435  \033[0mYou are already logged in.. \n\n")
 		return
@@ -146,7 +148,7 @@ func handleLogin(client *Client, value []string, _ chan<- bool) {
 	}
 }
 
-func handlePass(client *Client, value []string, quitChan chan<- bool) {
+func handlePass(client *Client, value []string) {
 	if client.Session.Authenticated {
 		fmt.Fprintf(client.Conn, "\033[33m435  \033[0mYou are already logged in.. \n\n")
 		return
@@ -188,7 +190,7 @@ func handlePass(client *Client, value []string, quitChan chan<- bool) {
 						commandList := strings.Join(availableCommands, " ") + "\n"
 
 						if _, err := client.Session.HelpConnection.Write([]byte(commandList)); err != nil {
-							log.Printf("Error updating commands on help connection: %v\n", err)
+							fmt.Printf("Error updating commands on help connection: %v\n", err)
 						}
 					}
 					return
@@ -201,7 +203,7 @@ func handlePass(client *Client, value []string, quitChan chan<- bool) {
 	}
 }
 
-func handleQuit(client *Client, _ []string, quitChan chan<- bool) {
+func handleQuit(client *Client, _ []string) {
 	if client.Session.DTPConnection != nil {
 		client.Session.DTPConnection.Close()
 	}
@@ -210,12 +212,10 @@ func handleQuit(client *Client, _ []string, quitChan chan<- bool) {
 	client.Conn.Write([]byte("\033[32m221  \033[0mConnection closed.\n\n"))
 	client.Session.Authenticated = false
 
-	quitChan <- true
 	client.Session.Login = ""
-	close(quitChan)
 }
 
-func handleHelp(client *Client, _ []string, _ chan<- bool) {
+func handleHelp(client *Client, _ []string) {
 	if client.Session.Authenticated {
 		fmt.Fprintf(client.Conn, "\033[32m200  \033[0mAvailable commands: \n     help, echo, hllo, rgsr, user, pass, quit, pasv, list, retr, stor  \n\n")
 		return
@@ -225,7 +225,7 @@ func handleHelp(client *Client, _ []string, _ chan<- bool) {
 	}
 }
 
-func handlePassive(client *Client, _ []string, done chan<- bool) {
+func handlePassive(client *Client, _ []string) {
 	if !client.Session.Authenticated {
 		client.Conn.Write([]byte("\033[31m503  \033[0mNot logged in.\n\n"))
 		return
@@ -242,7 +242,7 @@ func handlePassive(client *Client, _ []string, done chan<- bool) {
 	}
 
 	// Always create a new listener, even if already in passive mode
-	dtpListener, err := net.Listen("tcp", "jamserver:0")
+	dtpListener, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		fmt.Printf("Error creating listener: %v\n", err)
 		client.Conn.Write([]byte("\033[31m425  \033[0mCan't open data connection.\n\n"))
@@ -311,7 +311,7 @@ func handlePassive(client *Client, _ []string, done chan<- bool) {
 	}()
 }
 
-func handleList(client *Client, args []string, done chan<- bool) {
+func handleList(client *Client, args []string) {
 	if !client.Session.Authenticated {
 		client.Conn.Write([]byte("\033[31m530  \033[0mNot logged in. \n\n"))
 		return
@@ -372,7 +372,7 @@ func handleList(client *Client, args []string, done chan<- bool) {
 	client.Conn.Write([]byte("\033[32m226  \033[0mDirectory send OK. \n\n"))
 }
 
-func handleRetrieve(client *Client, args []string, _ chan<- bool) {
+func handleRetrieve(client *Client, args []string) {
 	if len(args) < 1 {
 		client.Conn.Write([]byte("\033[31m501 \033[0mSyntax error in parameters or arguments.\n   Usage: RETR <filename>\n\n"))
 		return
@@ -388,7 +388,7 @@ func handleRetrieve(client *Client, args []string, _ chan<- bool) {
 
 	// Check if client is in passive mode
 	if client.Session.DTPConnection == nil {
-		client.Conn.Write([]byte("\033[31m425 \033[0mUse PASV or PORT first.\n\n"))
+		client.Conn.Write([]byte("\033[31m425 \033[0mUse PASV first.\n\n"))
 		return
 	}
 
@@ -409,34 +409,25 @@ func handleRetrieve(client *Client, args []string, _ chan<- bool) {
 	client.Session.Passive = false
 }
 
-func handleStore(client *Client, args []string, quitChan chan<- bool) {
+func handleStore(client *Client, args []string) {
 	if len(args) < 1 {
 		fmt.Fprintf(client.Conn, "\033[31m501 \033[0mSyntax error in parameters or arguments. Usage: STOR <filename>\n\n")
 		return
 	}
 
 	filename := args[0]
-	filepath := fmt.Sprintf("app/jam_filesystem/%s", filename)
 
-	// Check if client is in passive mode
 	if client.Session.DTPConnection == nil {
-		fmt.Fprintf(client.Conn, "\033[31m425 \033[0mUse PASV or PORT first.\n\n")
+		fmt.Fprintf(client.Conn, "\033[31m425 \033[0mUse PASV first.\n\n")
 		return
 	}
-
-	// Create or open the file for writing
-	file, err := os.Create(filepath)
-	if err != nil {
-		fmt.Fprintf(client.Conn, "\033[31m550 \033[0mCould not create file: %s\n\n", filename)
-		return
-	}
-	defer file.Close()
 
 	fmt.Fprintf(client.Conn, "\033[32m150 \033[0mOpening data connection for %s.\n\n", filename)
 
 	client.Session.DTPConnection.SetReadDeadline(time.Now().Add(30 * time.Second))
 
-	// Read data from the data connection and write to file
+	// Read all data from the connection
+	var buffer bytes.Buffer
 	buf := make([]byte, 1024)
 	totalBytes := 0
 
@@ -456,10 +447,10 @@ func handleStore(client *Client, args []string, quitChan chan<- bool) {
 			return
 		}
 
-		// Write to file
-		_, writeErr := file.Write(buf[:n])
+		// Write to buffer
+		_, writeErr := buffer.Write(buf[:n])
 		if writeErr != nil {
-			fmt.Fprintf(client.Conn, "\033[31m426 \033[0mError writing file: %v\n\n", writeErr)
+			fmt.Fprintf(client.Conn, "\033[31m426 \033[0mError buffering data: %v\n\n", writeErr)
 			return
 		}
 
@@ -467,6 +458,12 @@ func handleStore(client *Client, args []string, quitChan chan<- bool) {
 	}
 
 	client.Session.DTPConnection.SetReadDeadline(time.Time{})
+
+	err := globalFileSystem.WriteFile(filename, buffer.Bytes())
+	if err != nil {
+		fmt.Fprintf(client.Conn, "\033[31m550 \033[0mCould not write file: %s - %v\n\n", filename, err)
+		return
+	}
 
 	// Send success response
 	fmt.Fprintf(client.Conn, "\033[32m226 \033[0mTransfer complete. Total bytes received: %d.\n\n", totalBytes)
