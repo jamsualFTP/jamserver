@@ -18,13 +18,13 @@ func main() {
 	logFileName := "help_tester.log"
 	logFile, err := os.OpenFile(logFileName, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
 	if err != nil {
-		log.Fatalf("Błąd otwierania pliku logów %s: %v", logFileName, err)
+		log.Fatalf("Error on open file %s: %v", logFileName, err)
 	}
 	defer logFile.Close()
 
 	mw := io.MultiWriter(os.Stderr, logFile)
 	log.SetOutput(mw)
-	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds) // Use microseconds for better timing
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
 
 	serverHost := flag.String("host", "localhost", "Server hostname or IP address")
 	controlPort := flag.Int("cport", 2121, "Control connection port")
@@ -50,7 +50,7 @@ func main() {
 
 	done := make(chan struct{})
 
-	for i := 0; i < *numClients; i++ { // Corrected loop range
+	for i := range *numClients {
 		wg.Add(1)
 		go simulateClient(i, serverControlAddr, serverHelpAddr, *username, *password, &wg, done)
 	}
@@ -66,13 +66,10 @@ func main() {
 	log.Printf("Test finished after %v. All clients completed.", time.Since(startTime))
 }
 
-// ... (Funkcja main - zakładam, że jest poprawna i zawiera inicjalizację logowania do pliku) ...
-
 func simulateClient(id int, controlAddr, helpAddr, user, pass string, wg *sync.WaitGroup, done <-chan struct{}) {
 	defer wg.Done()
 	logPrefix := fmt.Sprintf("[Client %d] ", id)
 
-	// --- Połączenie Kontrolne ---
 	controlConn, err := net.DialTimeout("tcp", controlAddr, 5*time.Second)
 	if err != nil {
 		log.Printf("%sError connecting to control port %s: %v", logPrefix, controlAddr, err)
@@ -82,11 +79,10 @@ func simulateClient(id int, controlAddr, helpAddr, user, pass string, wg *sync.W
 	log.Printf("%sConnected to control port.", logPrefix)
 	controlReader := bufio.NewReader(controlConn)
 
-	// --- Połączenie HELP ---
 	helpConn, err := net.DialTimeout("tcp", helpAddr, 5*time.Second)
 	if err != nil {
 		log.Printf("%sError connecting to HELP port %s: %v", logPrefix, helpAddr, err)
-		controlConn.Close() // Zamknij też controlConn
+		controlConn.Close()
 		return
 	}
 	defer helpConn.Close()
@@ -120,7 +116,7 @@ func simulateClient(id int, controlAddr, helpAddr, user, pass string, wg *sync.W
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() && linesRead > 0 {
 				log.Printf("%sTimeout reading further welcome lines, assuming complete.", logPrefix)
-				break // Wyjdź z pętli
+				break
 			}
 			log.Printf("%sError reading welcome line %d: %v", logPrefix, linesRead+1, err)
 			helpConn.Close()
@@ -141,7 +137,6 @@ func simulateClient(id int, controlAddr, helpAddr, user, pass string, wg *sync.W
 		log.Printf("%sDid not receive expected 220 welcome code.", logPrefix)
 	}
 
-	// --- Sprawdzenie initial HELP ---
 	select {
 	case initialHelp, ok := <-helpDataChan:
 		if !ok {
@@ -156,17 +151,14 @@ func simulateClient(id int, controlAddr, helpAddr, user, pass string, wg *sync.W
 		return
 	}
 
-	// --- Losowy sleep przed logowaniem ---
 	initialSleep := time.Duration(50+rand.Intn(500)) * time.Millisecond
 	select {
 	case <-time.After(initialSleep):
-		// Kontynuuj
 	case <-done:
 		log.Printf("%sReceived stop signal during initial sleep.", logPrefix)
 		return
 	}
 
-	// --- Logowanie ---
 	if err := sendCommand(logPrefix+"Control", controlConn, fmt.Sprintf("USER %s", user)); err != nil {
 		return
 	}
@@ -181,8 +173,6 @@ func simulateClient(id int, controlAddr, helpAddr, user, pass string, wg *sync.W
 	}
 	controlConn.SetReadDeadline(time.Time{})
 	log.Printf("%sUSER response: %s", logPrefix, userResp)
-
-	// time.Sleep(100 * time.Millisecond) // Opcjonalny sleep
 
 	if err := sendCommand(logPrefix+"Control", controlConn, fmt.Sprintf("PASS %s", pass)); err != nil {
 		return
@@ -200,11 +190,9 @@ func simulateClient(id int, controlAddr, helpAddr, user, pass string, wg *sync.W
 	if err != nil {
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			log.Printf("%sTimeout waiting for PASS response.", logPrefix)
-		} else if err != io.EOF { // Nie loguj EOF jako błędu krytycznego
+		} else if err != io.EOF {
 			log.Printf("%sError reading PASS response: %v", logPrefix, err)
 		}
-		// Nawet jeśli był błąd odczytu odpowiedzi PASS, logowanie mogło się udać na serwerze.
-		// Sprawdzimy kanał HELP poniżej.
 	} else {
 		log.Printf("%sPASS response: %s", logPrefix, loginResp)
 		if strings.HasPrefix(loginResp, "230") {
@@ -221,7 +209,7 @@ func simulateClient(id int, controlAddr, helpAddr, user, pass string, wg *sync.W
 			log.Printf("%sHELP channel closed before checking for update.", logPrefix)
 		} else {
 			log.Printf("%sReceived potential updated HELP data: %s", logPrefix, updatedHelp)
-			if strings.Contains(updatedHelp, "pasv") { // Proste sprawdzenie
+			if strings.Contains(updatedHelp, "pasv") {
 				log.Printf("%sHELP data confirms logged-in state.", logPrefix)
 				if !loginSucceeded {
 					log.Printf("%sWarning: HELP data updated despite non-230 PASS response or read error.", logPrefix)
@@ -241,7 +229,6 @@ func simulateClient(id int, controlAddr, helpAddr, user, pass string, wg *sync.W
 		return
 	}
 
-	// --- Pętla oczekiwania ---
 	log.Printf("%sEntering wait loop (Login success: %t)...", logPrefix, loginSucceeded)
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
@@ -259,14 +246,13 @@ func simulateClient(id int, controlAddr, helpAddr, user, pass string, wg *sync.W
 				controlConn.SetReadDeadline(time.Time{})
 				log.Printf("%sQUIT response: %s", logPrefix, quitResp)
 			}
-			// Poczekaj na zakończenie gorutyny HELP przed wyjściem z simulateClient
-			helpConn.Close() // Zamknięcie połączenia powinno zakończyć readHelpConnection
-			helpWg.Wait()    // Czekaj na zakończenie gorutyny readHelpConnection
+			helpConn.Close()
+			helpWg.Wait()
 			return
 		case helpMsg, ok := <-helpDataChan:
 			if !ok {
 				log.Printf("%sHELP connection closed unexpectedly during wait loop.", logPrefix)
-				return // Zakończ, jeśli kanał HELP został zamknięty
+				return
 			}
 			log.Printf("%sReceived subsequent HELP data: %s", logPrefix, helpMsg)
 		case <-ticker.C:
@@ -275,8 +261,8 @@ func simulateClient(id int, controlAddr, helpAddr, user, pass string, wg *sync.W
 }
 
 func readHelpConnection(logPrefix string, conn net.Conn, dataChan chan<- string, wg *sync.WaitGroup) {
-	defer wg.Done()       // Zasygnalizuj zakończenie
-	defer close(dataChan) // Zamknij kanał, gdy funkcja się zakończy
+	defer wg.Done()
+	defer close(dataChan)
 	reader := bufio.NewReader(conn)
 	for {
 		err := conn.SetReadDeadline(time.Now().Add(2 * time.Second))
@@ -289,22 +275,20 @@ func readHelpConnection(logPrefix string, conn net.Conn, dataChan chan<- string,
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 				continue
 			}
-			return // Inny błąd (EOF)
+			return // (EOF)
 		}
 		trimmedLine := strings.TrimSpace(line)
 		if trimmedLine != "" {
 			select {
 			case dataChan <- trimmedLine:
-			case <-time.After(100 * time.Millisecond): // Zwiększony timeout dla kanału
+			case <-time.After(100 * time.Millisecond):
 				log.Printf("%sHELP Channel full or blocked, discarding message: %s", logPrefix, trimmedLine)
 			}
 		}
 	}
 }
 
-// Funkcja sendCommand - bez zmian
 func sendCommand(logPrefix string, conn net.Conn, command string) error {
-	// log.Printf("%sSending: %s", logPrefix, command) // Uncomment for debugging
 	_, err := fmt.Fprintf(conn, "%s\r\n", command)
 	if err != nil {
 		log.Printf("%sError sending command '%s': %v", logPrefix, command, err)
@@ -312,7 +296,6 @@ func sendCommand(logPrefix string, conn net.Conn, command string) error {
 	return err
 }
 
-// Funkcja readResponse - bez zmian (bez deadline'u wewnątrz)
 func readResponse(logPrefix string, reader *bufio.Reader) (string, error) {
 	line, err := reader.ReadString('\n')
 	if err != nil {
@@ -322,6 +305,5 @@ func readResponse(logPrefix string, reader *bufio.Reader) (string, error) {
 		return "", err
 	}
 	trimmedLine := strings.TrimSpace(line)
-	// log.Printf("%sReceived: %s", logPrefix, trimmedLine) // Uncomment for debugging
 	return trimmedLine, nil
 }
